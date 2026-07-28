@@ -201,6 +201,42 @@ docker build -t rag-bot .
 docker run --env-file .env rag-bot
 ```
 
+## Self-hosting on your own server (genuinely free)
+
+If you already have a server with Docker on it, this is the actually-free
+option — no platform paywall, since it's your own hardware.
+
+If this repo isn't pushed to GitHub/GitLab yet, either push it there first
+and `git clone` on the server, or just copy the folder over directly
+(`rsync -av --exclude venv --exclude .env ./ user@server:~/rag-neo4j-telegram-bot/`,
+then create `.env` on the server separately — don't rsync your local `.env`
+over an unencrypted connection if you can avoid it).
+
+```bash
+git clone <your-repo-url>
+cd rag-neo4j-telegram-bot
+cp .env.example .env
+nano .env   # fill in real TELEGRAM_BOT_TOKEN, GOOGLE_API_KEY, NEO4J_* values
+docker compose up -d --build bot
+```
+
+That's it — `docker-compose.yml` defines a `bot` service that builds this
+repo's `Dockerfile`, loads `.env`, and runs with `restart: unless-stopped`
+so it survives reboots and crashes, same as any other long-running
+container on the box. No ports need to be opened or forwarded; it only
+makes outbound connections (Telegram, Gemini, Neo4j Aura).
+
+Useful commands:
+```bash
+docker compose logs -f bot        # watch it start up / confirm MCP connects
+docker compose restart bot        # after editing code or .env
+docker compose up -d --build bot  # rebuild after a git pull
+```
+
+(The `neo4j` service in the same compose file is unrelated and optional —
+only relevant if you want to run Neo4j locally instead of Aura. If you're
+on Aura, ignore it; `docker compose up -d bot` only starts the bot.)
+
 ## Project layout
 
 ```
