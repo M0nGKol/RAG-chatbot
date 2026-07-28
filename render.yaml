@@ -1,0 +1,37 @@
+# Render Blueprint -- optional infra-as-code deploy.
+# https://render.com/docs/blueprint-spec (verify field names there if this
+# fails to parse; Render's schema does evolve). The manual dashboard flow
+# in README.md works regardless and doesn't depend on this file at all.
+services:
+  - type: worker
+    name: rag-neo4j-telegram-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter # background workers require a paid plan, no free tier
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: EMBEDDING_DIMENSIONS
+        value: "768"
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_DATABASE
+        sync: false
+      - key: MCP_SERVER_COMMAND
+        value: neo4j-mcp-server
+      - key: DUPLICATE_THRESHOLD
+        value: "0.97"
+      - key: EXTEND_THRESHOLD
+        value: "0.90"
+      - key: TOP_K_SIMILAR
+        value: "3"
