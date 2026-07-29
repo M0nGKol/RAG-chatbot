@@ -9,7 +9,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
-from orchestrator.gemini_mcp_bridge import GraphRAGOrchestrator
+from orchestrator.gemini_mcp_bridge import GraphRAGOrchestrator, QuotaExceededError
 
 log = logging.getLogger("telegram_bot")
 
@@ -44,6 +44,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         reply = await orchestrator.ask(session_id, user_text)
+    except QuotaExceededError:
+        log.error("Gemini quota exhausted while answering %s", session_id)
+        reply = (
+            "I've hit my AI usage limit for now, so I can't answer this one. "
+            "This resets after a short wait (or at the start of the next day "
+            "if the daily cap is reached) -- please try again later."
+        )
     except Exception:
         log.exception("Error handling message from %s", session_id)
         reply = "Something went wrong on my end -- please try again in a moment."
