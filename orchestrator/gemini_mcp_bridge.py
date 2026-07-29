@@ -17,16 +17,27 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import AsyncExitStack
+from datetime import timedelta
 
 from google import genai
 from google.genai import types
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import McpError
 
 from common.config import Settings
 from orchestrator.schema_convert import json_schema_to_genai_schema
 
 log = logging.getLogger("orchestrator")
+
+# mcp's ClientSession.call_tool() has NO timeout by default -- it will await
+# a response from the MCP server subprocess forever. If that subprocess (or
+# the Aura instance it's querying) ever stalls -- a slow/cold query, Aura
+# waking up from idle, a network hiccup -- this call hangs indefinitely.
+# Because python-telegram-bot processes updates sequentially by default,
+# ONE stuck tool call freezes the bot for every user until it's manually
+# restarted. This timeout turns that into a clean error instead.
+MCP_TOOL_TIMEOUT = timedelta(seconds=45)
 
 SYSTEM_INSTRUCTION = """You are a helpful assistant answering questions using \
 a Neo4j knowledge graph as your source of truth. You have tools available to \
@@ -103,8 +114,20 @@ class GraphRAGOrchestrator:
             function_response_parts = []
             for call in response.function_calls:
                 log.info("Gemini -> MCP tool call: %s(%s)", call.name, dict(call.args or {}))
-                result = await self.mcp_session.call_tool(call.name, dict(call.args or {}))
-                result_text = _tool_result_to_text(result)
+                try:
+                    result = await self.mcp_session.call_tool(
+                        call.name,
+                        dict(call.args or {}),
+                        read_timeout_seconds=MCP_TOOL_TIMEOUT,
+                    )
+                    result_text = _tool_result_to_text(result)
+                except McpError as e:
+                    log.error("MCP tool call %s timed out or failed: %s", call.name, e)
+                    result_text = (
+                        "(this tool call failed or timed out -- tell the user the "
+                        "knowledge base is temporarily unavailable and to try again "
+                        "in a moment)"
+                    )
                 function_response_parts.append(
                     types.Part.from_function_response(
                         name=call.name, response={"result": result_text}
