@@ -18,7 +18,6 @@ import asyncio
 import logging
 import os
 from contextlib import AsyncExitStack
-from datetime import timedelta
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -39,7 +38,12 @@ log = logging.getLogger("orchestrator")
 # Because python-telegram-bot processes updates sequentially by default,
 # ONE stuck tool call freezes the bot for every user until it's manually
 # restarted. This timeout turns that into a clean error instead.
-MCP_TOOL_TIMEOUT = timedelta(seconds=45)
+#
+# Applied via asyncio.wait_for rather than call_tool's own
+# read_timeout_seconds parameter: that parameter doesn't exist in
+# mcp 1.1.2 (the version pinned in requirements.txt) and passing it raises
+# TypeError. wait_for works on every mcp version.
+MCP_TOOL_TIMEOUT_SECONDS = 45
 
 # google-genai's Chat.send_message() is a SYNCHRONOUS network call. Calling
 # it directly inside an `async def` blocks the entire asyncio event loop
@@ -154,13 +158,12 @@ class GraphRAGOrchestrator:
             for call in response.function_calls:
                 log.info("Gemini -> MCP tool call: %s(%s)", call.name, dict(call.args or {}))
                 try:
-                    result = await self.mcp_session.call_tool(
-                        call.name,
-                        dict(call.args or {}),
-                        read_timeout_seconds=MCP_TOOL_TIMEOUT,
+                    result = await asyncio.wait_for(
+                        self.mcp_session.call_tool(call.name, dict(call.args or {})),
+                        timeout=MCP_TOOL_TIMEOUT_SECONDS,
                     )
                     result_text = _tool_result_to_text(result)
-                except McpError as e:
+                except (McpError, asyncio.TimeoutError) as e:
                     log.error("MCP tool call %s timed out or failed: %s", call.name, e)
                     result_text = (
                         "(this tool call failed or timed out -- tell the user the "
