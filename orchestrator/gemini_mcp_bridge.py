@@ -21,6 +21,7 @@ from contextlib import AsyncExitStack
 from datetime import timedelta
 
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -51,6 +52,13 @@ MCP_TOOL_TIMEOUT = timedelta(seconds=45)
 # top of that, so a stuck thread still eventually gives up instead of
 # hanging forever.
 GEMINI_REQUEST_TIMEOUT_MS = 30_000
+
+# Gemini occasionally returns transient 5xx errors (504 DEADLINE_EXCEEDED,
+# 503 UNAVAILABLE) that have nothing to do with the request itself -- retry
+# those a couple of times with a short backoff before giving up, so a random
+# server-side hiccup doesn't surface as a failure to the user at all.
+GEMINI_MAX_RETRIES = 2
+GEMINI_RETRY_BACKOFF_SECONDS = 2
 
 SYSTEM_INSTRUCTION = """You are a helpful assistant answering questions using \
 a Neo4j knowledge graph as your source of truth. You have tools available to \
@@ -119,13 +127,26 @@ class GraphRAGOrchestrator:
             )
         return self._chats[session_id]
 
+    async def _send_message(self, chat, content):
+        """chat.send_message, off the event loop thread, with retries on
+        transient Gemini server errors (see GEMINI_MAX_RETRIES above)."""
+        for attempt in range(1, GEMINI_MAX_RETRIES + 2):  # +2: first try + N retries
+            try:
+                return await asyncio.to_thread(chat.send_message, content)
+            except genai_errors.ServerError as e:
+                if attempt > GEMINI_MAX_RETRIES:
+                    raise
+                log.warning(
+                    "Gemini server error (attempt %d/%d), retrying in %ds: %s",
+                    attempt, GEMINI_MAX_RETRIES + 1, GEMINI_RETRY_BACKOFF_SECONDS, e,
+                )
+                await asyncio.sleep(GEMINI_RETRY_BACKOFF_SECONDS)
+
     async def ask(self, session_id: str, message: str) -> str:
         """Send a user message, resolving any MCP tool calls Gemini makes
         along the way, and return the final text reply."""
         chat = self._get_chat(session_id)
-        # chat.send_message is synchronous/blocking -- run it off the event
-        # loop thread (see GEMINI_REQUEST_TIMEOUT_MS comment above).
-        response = await asyncio.to_thread(chat.send_message, message)
+        response = await self._send_message(chat, message)
 
         # Gemini may chain multiple tool calls before it's ready to answer.
         while response.function_calls:
@@ -151,7 +172,7 @@ class GraphRAGOrchestrator:
                         name=call.name, response={"result": result_text}
                     )
                 )
-            response = await asyncio.to_thread(chat.send_message, function_response_parts)
+            response = await self._send_message(chat, function_response_parts)
 
         return response.text or "I couldn't come up with an answer for that."
 
