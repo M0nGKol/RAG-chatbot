@@ -13,11 +13,19 @@ from google.genai import types
 
 from common.config import Settings
 
+# Ingestion is a synchronous CLI script (no event loop to block), but a
+# request-level timeout still matters so a stuck network call doesn't hang
+# the whole ingestion run forever.
+GEMINI_REQUEST_TIMEOUT_MS = 30_000
+
 
 class GeminiClient:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.client = genai.Client(api_key=settings.google_api_key)
+        self.client = genai.Client(
+            api_key=settings.google_api_key,
+            http_options=types.HttpOptions(timeout=GEMINI_REQUEST_TIMEOUT_MS),
+        )
 
     def embed_text(self, text: str, task_type: str = "RETRIEVAL_DOCUMENT") -> list[float]:
         """Embed a single string. task_type should be RETRIEVAL_DOCUMENT for

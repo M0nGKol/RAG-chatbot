@@ -25,7 +25,18 @@ async def run() -> None:
     await orchestrator.start()
     log.info("Connected to Neo4j MCP server.")
 
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    # concurrent_updates: without this, python-telegram-bot processes one
+    # update at a time -- with a whole batch/class using this bot, that
+    # means everyone queues up behind whoever asked first, even once a
+    # single request can no longer freeze the process outright. A modest
+    # cap (rather than unlimited) keeps a burst of messages from all
+    # hammering the Gemini/MCP/Aura calls at once.
+    application = (
+        Application.builder()
+        .token(settings.telegram_bot_token)
+        .concurrent_updates(8)
+        .build()
+    )
     application.bot_data["orchestrator"] = orchestrator
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
